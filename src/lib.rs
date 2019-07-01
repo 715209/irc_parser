@@ -17,10 +17,10 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Message {
-    tags: Option<HashMap<String, Option<String>>>,
-    prefix: Option<String>,
-    command: Option<String>,
-    params: Option<Vec<String>>,
+    pub tags: Option<HashMap<String, Option<String>>>,
+    pub prefix: Option<String>,
+    pub command: Option<String>,
+    pub params: Option<Vec<String>>,
 }
 
 impl Message {
