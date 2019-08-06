@@ -1,5 +1,5 @@
 [package]
-name = "twitch_parser"
+name = "irc_parser"
 version = "0.1.1"
 authors = ["Brian Spit <brian@mythenatic.com>"]
 edition = "2018"
