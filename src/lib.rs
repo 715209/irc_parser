@@ -1,30 +1,48 @@
 use std::collections::HashMap;
 
 /*
-<message>  ::= [':' <prefix> <SPACE> ] <command> <params> <crlf>
-<prefix>   ::= <servername> | <nick> [ '!' <user> ] [ '@' <host> ]
-<command>  ::= <letter> { <letter> } | <number> <number> <number>
-<SPACE>    ::= ' ' { ' ' }
-<params>   ::= <SPACE> [ ':' <trailing> | <middle> <params> ]
+<message>       ::= ['@' <tags> <SPACE>] [':' <prefix> <SPACE> ] <command> <params> <crlf>
+<tags>          ::= <tag> [';' <tag>]*
+<tag>           ::= <key> ['=' <escaped_value>]
+<key>           ::= [ <client_prefix> ] [ <vendor> '/' ] <key_name>
+<client_prefix> ::= '+'
+<key_name>      ::= <non-empty sequence of ascii letters, digits, hyphens ('-')>
+<escaped_value> ::= <sequence of zero or more utf8 characters except NUL, CR, LF, semicolon (`;`) and SPACE>
+<vendor>        ::= <host>
 
-<middle>   ::= <Any *non-empty* sequence of octets not including SPACE
-               or NUL or CR or LF, the first of which may not be ':'>
-<trailing> ::= <Any, possibly *empty*, sequence of octets not including
-                 NUL or CR or LF>
+<prefix>        ::= <servername> | <nick> [ '!' <user> ] [ '@' <host> ]
+<command>       ::= <letter> { <letter> } | <number> <number> <number>
+<SPACE>         ::= ' ' { ' ' }
+<params>        ::= <SPACE> [ ':' <trailing> | <middle> <params> ]
 
-<crlf>     ::= CR LF
+<middle>        ::= <Any *non-empty* sequence of octets not including SPACE
+                    or NUL or CR or LF, the first of which may not be ':'>
+<trailing>      ::= <Any, possibly *empty*, sequence of octets not including
+                    NUL or CR or LF>
+
+<crlf>          ::= CR LF
 */
 
-#[derive(Debug)]
-pub struct Message {
-    pub tags: Option<HashMap<String, Option<String>>>,
-    pub prefix: Option<String>,
-    pub command: Option<String>,
-    pub params: Option<Vec<String>>,
+#[derive(Debug, PartialEq)]
+pub enum Prefix<'a> {
+    Servername(&'a str),
+    Nick(&'a str, &'a str, &'a str),
 }
 
-impl Message {
-    pub fn parse(message: String) -> Result<Message, &'static str> {
+#[derive(Debug)]
+pub struct Message<'a> {
+    pub tags: Option<HashMap<&'a str, Option<&'a str>>>,
+    pub prefix: Option<Prefix<'a>>,
+    pub command: Option<&'a str>,
+    pub params: Option<Vec<&'a str>>,
+}
+
+impl<'a> Message<'a> {
+    pub fn parse(message: &str) -> Result<Message, &'static str> {
+        if &message.len() == &0 {
+            return Err("Nothing found to parse");
+        }
+
         let mut msg = Message {
             tags: None,
             prefix: None,
@@ -32,60 +50,90 @@ impl Message {
             params: None,
         };
 
-        let split_message: Vec<String> = message.split_whitespace().map(String::from).collect();
-        let mut _loc: usize = 0;
+        let message = message.trim();
+        let mut tags: Option<&str> = None;
+        let mut prefix: Option<&str> = None;
+        let mut command: Option<&str> = None;
 
-        // tags
-        if split_message[_loc].chars().next().unwrap() == '@' {
-            let tags: HashMap<String, Option<String>> = split_message[_loc][1..]
-                .split(';')
-                .map(|kv| kv.split('='))
-                .map(|mut kv| {
-                    let k: String = kv.next().unwrap().into();
-                    let mut v: Option<String> = Some(kv.next().unwrap().into());
-                    if v == Some("".to_string()) {
-                        v = None
-                    };
-
-                    (k, v)
-                })
-                .collect();
-
-            msg.tags = Some(tags);
-            _loc += 1;
+        match &message[..1] {
+            "@" => {
+                if let Some(i) = message.find(' ') {
+                    tags = Some(&message[..i]);
+                    if &message[i + 1..i + 2] == ":" {
+                        if let Some(j) = message[i + 1..].find(' ') {
+                            prefix = Some(&message[i + 1..=i + j]);
+                            command = Some(&message[i + j + 2..]);
+                        }
+                    } else {
+                        command = Some(&message[i + 1..]);
+                    }
+                }
+            }
+            ":" => {
+                if let Some(i) = message.find(' ') {
+                    prefix = Some(&message[..i]);
+                    command = Some(&message[i + 1..]);
+                }
+            }
+            _ => {
+                command = Some(&message[..]);
+            }
         }
 
-        // prefix
-        if split_message[_loc].chars().next().unwrap() == ':' {
-            msg.prefix = Some(split_message[_loc].to_owned());
-            _loc += 1;
+        if let Some(d) = tags {
+            msg.tags = Some(
+                d[1..]
+                    .split(';')
+                    .map(|kv| kv.split('='))
+                    .map(|mut kv| {
+                        let k: &str = kv.next().unwrap();
+                        let mut v: Option<&str> = Some(kv.next().unwrap());
+                        if v == Some("") {
+                            v = None
+                        };
+
+                        (k, v)
+                    })
+                    .collect(),
+            );
         }
 
-        if let None = split_message.get(_loc) {
-            return Err("No command found");
+        if let Some(d) = prefix {
+            let prefix: Vec<&str> = d[1..].split(|ch| ch == '!' || ch == '@').collect();
+
+            if prefix.len() == 1 {
+                msg.prefix = Some(Prefix::Servername(&prefix[0]));
+            } else if prefix.len() == 3 {
+                msg.prefix = Some(Prefix::Nick(&prefix[0], &prefix[1], &prefix[2]));
+            }
         }
 
-        // command
-        msg.command = Some(split_message[_loc].to_owned());
-        _loc += 1;
+        if let Some(d) = command {
+            if let Some(i) = d.find(' ') {
+                msg.command = Some(&d[..i]);
 
-        // check if there are any params
-        if _loc == split_message.len() {
-            return Ok(msg);
+                let params_string: &str = &d[i + 1..];
+                let text_loc = params_string.find(':');
+                let mut params: Vec<&str> = Vec::new();
+
+                match text_loc {
+                    Some(0) => {
+                        params.push(&params_string[1..]);
+                    }
+                    Some(loc) => {
+                        params = params_string[..loc - 1].split_ascii_whitespace().collect();
+                        params.push(&params_string[loc + 1..]);
+                    }
+                    None => {
+                        params = params_string.split_ascii_whitespace().collect();
+                    }
+                }
+
+                msg.params = Some(params);
+            } else {
+                msg.command = command;
+            }
         }
-
-        let mut params = Vec::new();
-
-        while _loc < split_message.len() && split_message[_loc][..1] != ":".to_string() {
-            params.push(split_message[_loc].to_owned());
-            _loc += 1;
-        }
-
-        if _loc < split_message.len() && split_message[_loc][..1] == ":".to_string() {
-            params.push(split_message[_loc..split_message.len()].join(" ")[1..].to_string());
-        }
-
-        msg.params = Some(params);
 
         Ok(msg)
     }
@@ -93,67 +141,59 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use super::Message;
+    use super::{Message, Prefix};
 
     #[test]
     fn normal_message() {
-        let parsed = Message::parse(String::from("@badge-info=;badges=broadcaster/1;color=#008000;display-name=715209;emotes=;flags=;id=8a90aa05-eea3-4699-84eb-1d4c65b85f94;mod=0;room-id=21621987;subscriber=0;tmi-sent-ts=1559891010190;turbo=0;user-id=21621987;user-type= :715209!715209@715209.tmi.twitch.tv PRIVMSG #715209 :hello")).unwrap();
+        let parsed = Message::parse("@badge-info=;badges=broadcaster/1;color=#008000;display-name=715209;emotes=;flags=;id=8a90aa05-eea3-4699-84eb-1d4c65b85f94;mod=0;room-id=21621987;subscriber=0;tmi-sent-ts=1559891010190;turbo=0;user-id=21621987;user-type= :715209!715209@715209.tmi.twitch.tv PRIVMSG #715209 :hello").unwrap();
 
         assert_ne!(parsed.tags, None);
         assert_eq!(
             parsed.prefix,
-            Some(String::from(":715209!715209@715209.tmi.twitch.tv"))
+            Some(Prefix::Nick("715209", "715209", "715209.tmi.twitch.tv"))
         );
-        assert_eq!(parsed.command, Some(String::from("PRIVMSG")));
-        assert_eq!(
-            parsed.params,
-            Some(vec![String::from("#715209"), String::from("hello")])
-        );
+        assert_eq!(parsed.command, Some("PRIVMSG"));
+        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
     }
 
     #[test]
     fn normal_message_no_tags() {
-        let parsed = Message::parse(String::from(
-            ":715209!715209@715209.tmi.twitch.tv PRIVMSG #715209 :hello",
-        ))
-        .unwrap();
+        let parsed =
+            Message::parse(":715209!715209@715209.tmi.twitch.tv PRIVMSG #715209 :hello").unwrap();
 
         assert_eq!(parsed.tags, None);
         assert_eq!(
             parsed.prefix,
-            Some(String::from(":715209!715209@715209.tmi.twitch.tv"))
+            Some(Prefix::Nick("715209", "715209", "715209.tmi.twitch.tv"))
         );
-        assert_eq!(parsed.command, Some(String::from("PRIVMSG")));
-        assert_eq!(
-            parsed.params,
-            Some(vec![String::from("#715209"), String::from("hello")])
-        );
+        assert_eq!(parsed.command, Some("PRIVMSG"));
+        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
     }
 
     #[test]
     fn ping() {
-        let parsed = Message::parse(String::from("PING :tmi.twitch.tv")).unwrap();
+        let parsed = Message::parse("PING :tmi.twitch.tv").unwrap();
 
         assert_eq!(parsed.tags, None);
         assert_eq!(parsed.prefix, None);
-        assert_eq!(parsed.command, Some(String::from("PING")));
-        assert_eq!(parsed.params, Some(vec![String::from("tmi.twitch.tv")]));
+        assert_eq!(parsed.command, Some("PING"));
+        assert_eq!(parsed.params, Some(vec!["tmi.twitch.tv"]));
     }
 
     #[test]
     fn no_params() {
-        let parsed = Message::parse(String::from("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= :tmi.twitch.tv GLOBALUSERSTATE")).unwrap();
+        let parsed = Message::parse("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= :tmi.twitch.tv GLOBALUSERSTATE").unwrap();
 
         assert_ne!(parsed.tags, None);
-        assert_eq!(parsed.prefix, Some(String::from(":tmi.twitch.tv")));
-        assert_eq!(parsed.command, Some(String::from("GLOBALUSERSTATE")));
+        assert_eq!(parsed.prefix, Some(Prefix::Servername("tmi.twitch.tv")));
+        assert_eq!(parsed.command, Some("GLOBALUSERSTATE"));
         assert_eq!(parsed.params, None);
     }
 
     #[test]
-    fn no_command() {
-        let parsed = Message::parse(String::from("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= :tmi.twitch.tv"));
+    fn nothing_to_parse() {
+        let parsed = Message::parse("");
 
-        assert!(parsed.is_err(), "No command found");
+        assert!(parsed.is_err(), "Nothing found to parse");
     }
 }
