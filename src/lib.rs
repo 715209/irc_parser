@@ -189,6 +189,33 @@ mod tests {
         assert_eq!(parsed.command, Some("GLOBALUSERSTATE"));
         assert_eq!(parsed.params, None);
     }
+    #[test]
+    fn tags_no_prefix() {
+        let parsed = Message::parse("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= GLOBALUSERSTATE").unwrap();
+
+        assert_ne!(parsed.tags, None);
+        assert_eq!(parsed.prefix, None);
+        assert_eq!(parsed.command, Some("GLOBALUSERSTATE"));
+        assert_eq!(parsed.params, None);
+    }
+    #[test]
+    fn tags_and_params_no_prefix() {
+        let parsed = Message::parse("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= PRIVMSG #715209 :hello").unwrap();
+
+        assert_ne!(parsed.tags, None);
+        assert_eq!(parsed.prefix, None);
+        assert_eq!(parsed.command, Some("PRIVMSG"));
+        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
+    }
+    #[test]
+    fn only_command() {
+        let parsed = Message::parse("PRIVMSG").unwrap();
+
+        assert_eq!(parsed.tags, None);
+        assert_eq!(parsed.prefix, None);
+        assert_eq!(parsed.command, Some("PRIVMSG"));
+        assert_eq!(parsed.params, None);
+    }
 
     #[test]
     fn nothing_to_parse() {
