@@ -23,13 +23,13 @@ use std::collections::HashMap;
 <crlf>          ::= CR LF
 */
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Prefix<'a> {
     Servername(&'a str),
     Nick(&'a str, &'a str, &'a str),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message<'a> {
     pub tags: Option<HashMap<&'a str, Option<&'a str>>>,
     pub prefix: Option<Prefix<'a>>,
@@ -37,52 +37,38 @@ pub struct Message<'a> {
     pub params: Option<Vec<&'a str>>,
 }
 
-impl<'a> Message<'a> {
-    pub fn parse(message: &str) -> Result<Message, &'static str> {
-        if &message.len() == &0 {
-            return Err("Nothing found to parse");
-        }
-
-        let mut msg = Message {
+impl Default for Message<'_> {
+    fn default() -> Self {
+        Message {
             tags: None,
             prefix: None,
             command: None,
             params: None,
-        };
+        }
+    }
+}
 
-        let message = message.trim();
-        let mut tags: Option<&str> = None;
-        let mut prefix: Option<&str> = None;
-        let mut command: Option<&str> = None;
-
-        match &message[..1] {
-            "@" => {
-                if let Some(i) = message.find(' ') {
-                    tags = Some(&message[..i]);
-                    if &message[i + 1..i + 2] == ":" {
-                        if let Some(j) = message[i + 1..].find(' ') {
-                            prefix = Some(&message[i + 1..=i + j]);
-                            command = Some(&message[i + j + 2..]);
-                        }
-                    } else {
-                        command = Some(&message[i + 1..]);
-                    }
-                }
-            }
-            ":" => {
-                if let Some(i) = message.find(' ') {
-                    prefix = Some(&message[..i]);
-                    command = Some(&message[i + 1..]);
-                }
-            }
-            _ => {
-                command = Some(&message[..]);
-            }
+// TODO: Replace errors with real errors
+impl<'a> Message<'a> {
+    pub fn parse(message: &str) -> Result<Message, &'static str> {
+        if message.is_empty() {
+            return Err("Nothing found to parse");
         }
 
-        if let Some(d) = tags {
+        let mut msg: Message = Default::default();
+        let mut pos_head = 0;
+        let mut pos_tail;
+
+        if message.starts_with('@') {
+            let tags = if let Some(i) = message.find(' ') {
+                pos_tail = i;
+                &message[..pos_tail]
+            } else {
+                return Err("No command found");
+            };
+
             msg.tags = Some(
-                d[1..]
+                tags[1..]
                     .split(';')
                     .map(|kv| kv.split('='))
                     .map(|mut kv| {
@@ -96,43 +82,54 @@ impl<'a> Message<'a> {
                     })
                     .collect(),
             );
+
+            pos_head = pos_tail + 1;
         }
 
-        if let Some(d) = prefix {
-            let prefix: Vec<&str> = d[1..].split(|ch| ch == '!' || ch == '@').collect();
+        if message[pos_head..].starts_with(':') {
+            let prefix = if let Some(i) = &message[pos_head..].find(' ') {
+                pos_tail = pos_head + i;
+                &message[pos_head..pos_tail]
+            } else {
+                return Err("No command found");
+            };
+
+            let prefix: Vec<&str> = prefix[1..].split(|ch| ch == '!' || ch == '@').collect();
 
             if prefix.len() == 1 {
                 msg.prefix = Some(Prefix::Servername(&prefix[0]));
             } else if prefix.len() == 3 {
                 msg.prefix = Some(Prefix::Nick(&prefix[0], &prefix[1], &prefix[2]));
             }
+
+            pos_head = pos_tail + 1;
         }
 
-        if let Some(d) = command {
-            if let Some(i) = d.find(' ') {
-                msg.command = Some(&d[..i]);
+        let command_and_params = &message[pos_head..];
 
-                let params_string: &str = &d[i + 1..];
-                let text_loc = params_string.find(':');
-                let mut params: Vec<&str> = Vec::new();
+        if let Some(i) = command_and_params.find(' ') {
+            msg.command = Some(&command_and_params[..i]);
 
-                match text_loc {
-                    Some(0) => {
-                        params.push(&params_string[1..]);
-                    }
-                    Some(loc) => {
-                        params = params_string[..loc - 1].split_ascii_whitespace().collect();
-                        params.push(&params_string[loc + 1..]);
-                    }
-                    None => {
-                        params = params_string.split_ascii_whitespace().collect();
-                    }
+            let params_string: &str = &command_and_params[i + 1..];
+            let text_loc = params_string.find(':');
+            let mut params: Vec<&str> = Vec::new();
+
+            match text_loc {
+                Some(0) => {
+                    params.push(&params_string[1..]);
                 }
-
-                msg.params = Some(params);
-            } else {
-                msg.command = command;
+                Some(loc) => {
+                    params = params_string[..loc - 1].split_ascii_whitespace().collect();
+                    params.push(&params_string[loc + 1..]);
+                }
+                None => {
+                    params = params_string.split_ascii_whitespace().collect();
+                }
             }
+
+            msg.params = Some(params);
+        } else {
+            msg.command = Some(command_and_params);
         }
 
         Ok(msg)
@@ -222,5 +219,12 @@ mod tests {
         let parsed = Message::parse("");
 
         assert!(parsed.is_err(), "Nothing found to parse");
+    }
+
+    #[test]
+    fn only_tags() {
+        let parsed = Message::parse("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type=");
+
+        assert!(parsed.is_err(), "No command found");
     }
 }
