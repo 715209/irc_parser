@@ -23,21 +23,21 @@ use std::collections::HashMap;
 <crlf>          ::= CR LF
 */
 
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum Prefix<'a> {
-    Servername(&'a str),
-    Nick(&'a str, &'a str, &'a str),
+#[derive(Debug, PartialEq, Clone)]
+pub enum Prefix {
+    Servername(String),
+    Nick(String, String, String),
 }
 
 #[derive(Debug, Clone)]
-pub struct Message<'a> {
-    pub tags: Option<HashMap<&'a str, Option<&'a str>>>,
-    pub prefix: Option<Prefix<'a>>,
-    pub command: Option<&'a str>,
-    pub params: Option<Vec<&'a str>>,
+pub struct Message {
+    pub tags: Option<HashMap<String, Option<String>>>,
+    pub prefix: Option<Prefix>,
+    pub command: Option<String>,
+    pub params: Option<Vec<String>>,
 }
 
-impl Default for Message<'_> {
+impl Default for Message {
     fn default() -> Self {
         Message {
             tags: None,
@@ -49,13 +49,13 @@ impl Default for Message<'_> {
 }
 
 // TODO: Replace errors with real errors
-impl<'a> Message<'a> {
+impl Message {
     pub fn parse(message: &str) -> Result<Message, &'static str> {
         if message.is_empty() {
             return Err("Nothing found to parse");
         }
 
-        let mut msg: Message = Default::default();
+        let mut msg: Message = Message::default();
         let mut pos_head = 0;
         let mut pos_tail;
 
@@ -72,9 +72,9 @@ impl<'a> Message<'a> {
                     .split(';')
                     .map(|kv| kv.split('='))
                     .map(|mut kv| {
-                        let k: &str = kv.next().unwrap();
-                        let mut v: Option<&str> = Some(kv.next().unwrap());
-                        if v == Some("") {
+                        let k: String = kv.next().unwrap().to_owned();
+                        let mut v: Option<String> = Some(kv.next().unwrap().to_owned());
+                        if v == Some("".to_string()) {
                             v = None
                         };
 
@@ -97,9 +97,13 @@ impl<'a> Message<'a> {
             let prefix: Vec<&str> = prefix[1..].split(|ch| ch == '!' || ch == '@').collect();
 
             if prefix.len() == 1 {
-                msg.prefix = Some(Prefix::Servername(&prefix[0]));
+                msg.prefix = Some(Prefix::Servername(prefix[0].to_owned()));
             } else if prefix.len() == 3 {
-                msg.prefix = Some(Prefix::Nick(&prefix[0], &prefix[1], &prefix[2]));
+                msg.prefix = Some(Prefix::Nick(
+                    prefix[0].to_owned(),
+                    prefix[1].to_owned(),
+                    prefix[2].to_owned(),
+                ));
             }
 
             pos_head = pos_tail + 1;
@@ -108,28 +112,34 @@ impl<'a> Message<'a> {
         let command_and_params = &message[pos_head..];
 
         if let Some(i) = command_and_params.find(' ') {
-            msg.command = Some(&command_and_params[..i]);
+            msg.command = Some(command_and_params[..i].to_owned());
 
             let params_string: &str = &command_and_params[i + 1..];
             let text_loc = params_string.find(':');
-            let mut params: Vec<&str> = Vec::new();
+            let mut params: Vec<String> = Vec::new();
 
             match text_loc {
                 Some(0) => {
-                    params.push(&params_string[1..]);
+                    params.push(params_string[1..].to_owned());
                 }
                 Some(loc) => {
-                    params = params_string[..loc - 1].split_ascii_whitespace().collect();
-                    params.push(&params_string[loc + 1..]);
+                    params = params_string[..loc - 1]
+                        .split_ascii_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
+                    params.push(params_string[loc + 1..].to_owned());
                 }
                 None => {
-                    params = params_string.split_ascii_whitespace().collect();
+                    params = params_string
+                        .split_ascii_whitespace()
+                        .map(|s| s.to_string())
+                        .collect();
                 }
             }
 
             msg.params = Some(params);
         } else {
-            msg.command = Some(command_and_params);
+            msg.command = Some(command_and_params.to_owned());
         }
 
         Ok(msg)
@@ -147,10 +157,17 @@ mod tests {
         assert_ne!(parsed.tags, None);
         assert_eq!(
             parsed.prefix,
-            Some(Prefix::Nick("715209", "715209", "715209.tmi.twitch.tv"))
+            Some(Prefix::Nick(
+                "715209".to_string(),
+                "715209".to_string(),
+                "715209.tmi.twitch.tv".to_string()
+            ))
         );
-        assert_eq!(parsed.command, Some("PRIVMSG"));
-        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
+        assert_eq!(parsed.command, Some("PRIVMSG".to_string()));
+        assert_eq!(
+            parsed.params,
+            Some(vec!["#715209".to_string(), "hello".to_string()])
+        );
     }
 
     #[test]
@@ -161,10 +178,17 @@ mod tests {
         assert_eq!(parsed.tags, None);
         assert_eq!(
             parsed.prefix,
-            Some(Prefix::Nick("715209", "715209", "715209.tmi.twitch.tv"))
+            Some(Prefix::Nick(
+                "715209".to_string(),
+                "715209".to_string(),
+                "715209.tmi.twitch.tv".to_string()
+            ))
         );
-        assert_eq!(parsed.command, Some("PRIVMSG"));
-        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
+        assert_eq!(parsed.command, Some("PRIVMSG".to_string()));
+        assert_eq!(
+            parsed.params,
+            Some(vec!["#715209".to_string(), "hello".to_string()])
+        );
     }
 
     #[test]
@@ -173,8 +197,8 @@ mod tests {
 
         assert_eq!(parsed.tags, None);
         assert_eq!(parsed.prefix, None);
-        assert_eq!(parsed.command, Some("PING"));
-        assert_eq!(parsed.params, Some(vec!["tmi.twitch.tv"]));
+        assert_eq!(parsed.command, Some("PING".to_string()));
+        assert_eq!(parsed.params, Some(vec!["tmi.twitch.tv".to_string()]));
     }
 
     #[test]
@@ -182,8 +206,11 @@ mod tests {
         let parsed = Message::parse("@badge-info=;badges=;color=#008000;display-name=715209;emote-sets=0,33563,231890,300206296,300242181;user-id=21621987;user-type= :tmi.twitch.tv GLOBALUSERSTATE").unwrap();
 
         assert_ne!(parsed.tags, None);
-        assert_eq!(parsed.prefix, Some(Prefix::Servername("tmi.twitch.tv")));
-        assert_eq!(parsed.command, Some("GLOBALUSERSTATE"));
+        assert_eq!(
+            parsed.prefix,
+            Some(Prefix::Servername("tmi.twitch.tv".to_string()))
+        );
+        assert_eq!(parsed.command, Some("GLOBALUSERSTATE".to_string()));
         assert_eq!(parsed.params, None);
     }
     #[test]
@@ -192,7 +219,7 @@ mod tests {
 
         assert_ne!(parsed.tags, None);
         assert_eq!(parsed.prefix, None);
-        assert_eq!(parsed.command, Some("GLOBALUSERSTATE"));
+        assert_eq!(parsed.command, Some("GLOBALUSERSTATE".to_string()));
         assert_eq!(parsed.params, None);
     }
     #[test]
@@ -201,8 +228,11 @@ mod tests {
 
         assert_ne!(parsed.tags, None);
         assert_eq!(parsed.prefix, None);
-        assert_eq!(parsed.command, Some("PRIVMSG"));
-        assert_eq!(parsed.params, Some(vec!["#715209", "hello"]));
+        assert_eq!(parsed.command, Some("PRIVMSG".to_string()));
+        assert_eq!(
+            parsed.params,
+            Some(vec!["#715209".to_string(), "hello".to_string()])
+        );
     }
     #[test]
     fn only_command() {
@@ -210,7 +240,7 @@ mod tests {
 
         assert_eq!(parsed.tags, None);
         assert_eq!(parsed.prefix, None);
-        assert_eq!(parsed.command, Some("PRIVMSG"));
+        assert_eq!(parsed.command, Some("PRIVMSG".to_string()));
         assert_eq!(parsed.params, None);
     }
 
